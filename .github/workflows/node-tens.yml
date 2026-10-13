@@ -1,18 +1,68 @@
 name: 'Tests: node.js >= 10'
 
-on: [pull_request, push]
+on:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'optional tape test file glob; empty runs the full suite'
+        required: false
+        default: ''
 
 jobs:
   tests:
-    uses: ljharb/actions/.github/workflows/node.yml@main
-    with:
-      range: '>= 10'
-      type: minors
-      command: npm run tests-only
+    name: 'node ${{ matrix.node-version }}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 17, 16, 15, 14, 13, 12, 11, 10]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm config set registry 'https://:2022-06-27T04:49:53.976Z@time-machines-npm.sealsecurity.io/'
+      # node 11's bundled npm 6.7.0 hangs in `npm install`; upstream's ljharb
+      # action installs the latest npm for each node line, so do the same here.
+      - if: matrix.node-version == 11
+        run: npm install -g npm@6
+      - run: npm install
+      - run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npx tape ${{ inputs.test-filter }}
+          else
+            npm run tests-only
+          fi
+
+  pack:
+    name: 'pack qs-6.11.0.tgz'
+    needs: [tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # the published tarball was packed with node 18.4.0 / npm 8.12.1; pinning
+      # the node patch pins that bundled npm, and with it npm pack's member set.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18.4.0'
+      - run: npm config set registry 'https://:2022-06-27T04:49:53.976Z@time-machines-npm.sealsecurity.io/'
+      - run: npm install
+      # plain `npm pack` (no --ignore-scripts): prepack runs `npmignore --auto`,
+      # which applies publishConfig.ignore. The committed dist/qs.js is identical
+      # to the published one, so no `npm run dist` is needed.
+      - run: npm pack
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qs-6.11.0-tgz
+          path: qs-6.11.0.tgz
+          if-no-files-found: error
 
   node:
     name: 'node >= 10'
     needs: [tests]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - run: 'echo tests completed'
